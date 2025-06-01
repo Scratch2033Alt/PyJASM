@@ -1,0 +1,137 @@
+# Name of the workflow
+name: Build CPython WASM and Upload
+
+# Define when the workflow will run
+on:
+  # Trigger the workflow on push events to the 'main' branch
+  push:
+    branches:
+      - main
+  # Allow manual triggering of the workflow from the GitHub Actions UI
+  workflow_dispatch:
+
+# Grant necessary permissions to the GITHUB_TOKEN for pushing files
+permissions:
+  contents: write # Required for committing and pushing files to the repository
+
+# Define the jobs to be executed in this workflow
+jobs:
+  build_wasm:
+    # Specify the runner environment for this job
+    # Ubuntu is typically used for Emscripten builds
+    runs-on: ubuntu-latest
+
+    # Define the steps to be executed in this job
+    steps:
+      # Step 1: Checkout the current repository
+      # This action checks out your repository under $GITHUB_WORKSPACE,
+      # which is necessary for committing the compiled files later.
+      - name: Checkout current repository
+        uses: actions/checkout@v4
+
+      # Step 2: Get the latest Git tag from the current repository
+      # This step fetches all tags and then uses `git describe` to find the latest one.
+      # If no tags are found, it defaults to 'notag'.
+      - name: Get latest tag
+        id: get_tag # Assign an ID to this step to reference its outputs
+        run: |
+          git fetch --tags # Fetch all tags from the remote
+          # Get the latest tag. '2>/dev/null' suppresses errors if no tags exist.
+          # '|| echo "notag"' provides a fallback name if no tags are found.
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "notag")
+          # Output the latest tag, making it available to subsequent steps via `steps.get_tag.outputs.latest_tag`
+          echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+          echo "Discovered latest tag: $LATEST_TAG"
+
+      # Step 3: Set up Python environment
+      # CPython's build process and Emscripten's requirements often depend on Python.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x' # Use a recent stable Python 3 version
+
+      # Step 4: Set up Emscripten SDK
+      # This step clones the Emscripten SDK, installs the latest version,
+      # activates it, and adds its binary directory to the PATH for subsequent steps.
+      - name: Set up Emscripten SDK
+        run: |
+          echo "Setting up Emscripten SDK..."
+          git clone https://github.com/emscripten-core/emsdk.git
+          cd emsdk
+          ./emsdk install latest # Install the latest Emscripten SDK
+          ./emsdk activate latest --permanent # Activate it and configure environment variables
+          # Find the directory containing 'emcc' after activation
+          EMSDK_DIR=$(pwd)
+          EMCC_PATH=$(find "$EMSDK_DIR" -name "emcc" -print -quit)
+          EMCC_BIN_DIR=$(dirname "$EMCC_PATH")
+          # Add the Emscripten binary directory to the PATH for all subsequent steps
+          echo "$EMCC_BIN_DIR" >> "$GITHUB_PATH"
+          # Store the EMSDK root directory as an environment variable for later reference
+          echo "EMSDK_ROOT=$EMSDK_DIR" >> "$GITHUB_ENV"
+          echo "Emscripten SDK setup complete. emcc is now in PATH."
+
+      # Step 5: Clone the CPython repository
+      # This gets the source code for CPython.
+      - name: Clone CPython repository
+        run: |
+          echo "Cloning CPython repository..."
+          git clone https://github.com/python/cpython.git
+          echo "CPython repository cloned."
+
+      # Step 6: Build CPython for WebAssembly using Emscripten
+      # This step navigates into the CPython directory and runs the Emscripten build process.
+      # It assumes the standard CPython WASM build process found in `Tools/wasm`.
+      - name: Build CPython for WebAssembly
+        working-directory: ./cpython # Execute commands from the cpython directory
+        run: |
+          echo "Building CPython for WebAssembly..."
+          # Source the emsdk environment script again to ensure all tools are available
+          # This is crucial because each 'run' step starts a new shell.
+          source "${{ env.EMSDK_ROOT }}/emsdk_env.sh"
+          # Create and activate a Python virtual environment for build dependencies
+          python3 -m venv .venv
+          source .venv/bin/activate
+          # Install Python dependencies required for the WASM build
+          pip install -r Tools/wasm/requirements.txt
+          # Run the Emscripten build command for CPython
+          # This command typically compiles CPython into python.js and python.wasm
+          make -C Tools/wasm build
+          echo "CPython WASM build complete."
+          # List the contents of the build directory to verify output files
+          echo "Contents of CPython WASM build directory:"
+          ls -l Tools/wasm/build/
+
+      # Step 7: Prepare and rename compiled files for upload
+      # This step creates the target directories and copies the generated .js and .wasm files,
+      # renaming them according to the latest tag.
+      - name: Prepare compiled files for upload
+        run: |
+          LATEST_TAG="${{ steps.get_tag.outputs.latest_tag }}"
+          echo "Preparing files for tag: $LATEST_TAG"
+          # Create the target directories if they don't exist
+          mkdir -p compiled/JS compiled/WASM
+          # Copy and rename the generated files.
+          # The exact paths `cpython/Tools/wasm/build/python.js` and `python.wasm`
+          # are standard for CPython's Emscripten build output.
+          cp cpython/Tools/wasm/build/python.js compiled/JS/"$LATEST_TAG".js
+          cp cpython/Tools/wasm/build/python.wasm compiled/WASM/"$LATEST_TAG".wasm
+          echo "Files copied and renamed:"
+          ls -l compiled/JS/ compiled/WASM/
+
+      # Step 8: Commit and push the compiled files to the repository
+      # This step configures Git, adds the new/updated files, commits them, and pushes to the repo.
+      - name: Commit and push compiled files
+        run: |
+          LATEST_TAG="${{ steps.get_tag.outputs.latest_tag }}"
+          echo "Committing and pushing compiled files..."
+          # Configure Git user for the commit
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Add the compiled files to the Git staging area
+          git add compiled/JS/"$LATEST_TAG".js compiled/WASM/"$LATEST_TAG".wasm
+          # Commit the changes. The '|| echo "No changes to commit"' prevents the workflow
+          # from failing if the files haven't actually changed since the last commit.
+          git commit -m "feat: Add CPython WASM build for tag $LATEST_TAG" || echo "No changes to commit"
+          # Push the changes to the remote repository
+          git push
+          echo "Compiled files pushed to repository."
