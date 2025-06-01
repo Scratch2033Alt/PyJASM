@@ -89,12 +89,15 @@ jobs:
           # Create and activate a Python virtual environment for build dependencies
           python3 -m venv .venv
           source .venv/bin/activate
-          # Install Python dependencies required for the WASM build
-          # Removed the `ls -l` debugging step as the previous issue was addressed.
-          pip install -r Tools/wasm/requirements.txt
-          # Run the Emscripten build command for CPython
+          # --- DEBUGGING STEP: List contents of the Tools/wasm/ directory ---
+          echo "Listing contents of Tools/wasm/ directory:"
+          ls -l Tools/wasm/
+          # --- END DEBUGGING STEP ---
+          # Removed direct pip install for requirements.txt, as per CPython docs,
+          # the 'emscripten build' command should handle its own dependencies.
+          # Run the Emscripten build command for CPython using the recommended script
           # This command typically compiles CPython into python.js and python.wasm
-          make -C Tools/wasm build
+          python Tools/wasm/emscripten build
           echo "CPython WASM build complete."
           # List the contents of the build directory to verify output files
           echo "Contents of CPython WASM build directory:"
