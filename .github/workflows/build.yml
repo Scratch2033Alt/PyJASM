@@ -89,51 +89,50 @@ jobs:
           # Create and activate a Python virtual environment for build dependencies
           python3 -m venv .venv
           source .venv/bin/activate
-          # --- DEBUGGING STEP: List contents of the Tools/wasm/ directory ---
-          echo "Listing contents of Tools/wasm/ directory:"
-          ls -l Tools/wasm/
-          # --- END DEBUGGING STEP ---
-          # Removed direct pip install for requirements.txt, as per CPython docs,
-          # the 'emscripten build' command should handle its own dependencies.
           # Run the Emscripten build command for CPython using the recommended script
           # This command typically compiles CPython into python.js and python.wasm
           python Tools/wasm/emscripten build
           echo "CPython WASM build complete."
-          # List the contents of the build directory to verify output files
-          echo "Contents of CPython WASM build directory:"
-          ls -l Tools/wasm/build/
 
       # Step 7: Prepare and rename compiled files for upload
-      # This step creates the target directories and copies the generated .js and .wasm files,
-      # renaming them according to the latest commit hash.
+      # This step creates the target directory named after the commit hash
+      # and copies the entire contents of the build directory into it.
       - name: Prepare compiled files for upload
         run: |
           COMMIT_HASH="${{ steps.get_commit_hash.outputs.commit_hash }}"
-          echo "Preparing files for commit hash: $COMMIT_HASH"
-          # Create the target directories if they don't exist
-          mkdir -p compiled/JS compiled/WASM
-          # Copy and rename the generated files.
-          # The exact paths `cpython/Tools/wasm/build/python.js` and `python.wasm`
-          # are standard for CPython's Emscripten build output.
-          cp cpython/Tools/wasm/build/python.js compiled/JS/"$COMMIT_HASH".js
-          cp cpython/Tools/wasm/build/python.wasm compiled/WASM/"$COMMIT_HASH".wasm
-          echo "Files copied and renamed:"
-          ls -l compiled/JS/ compiled/WASM/
+          echo "Preparing build directory for commit hash: $COMMIT_HASH"
+          # Define the source directory where Emscripten build outputs are expected
+          CPYTHON_BUILD_DIR="cpython/cross-build/wasm32-emscripten/build"
+          # Define the target directory in your repo where the build will be copied
+          TARGET_UPLOAD_DIR="compiled/$COMMIT_HASH"
+
+          # --- DEBUGGING STEP: List contents of the expected build directory ---
+          echo "Listing contents of CPython build directory: $CPYTHON_BUILD_DIR"
+          ls -l "$CPYTHON_BUILD_DIR"
+          # --- END DEBUGGING STEP ---
+
+          # Create the target directory named after the commit hash
+          mkdir -p "$TARGET_UPLOAD_DIR"
+          # Copy the entire contents of the CPython build directory to the target upload directory
+          # The 'cp -r' command recursively copies the directory contents.
+          cp -r "$CPYTHON_BUILD_DIR"/* "$TARGET_UPLOAD_DIR"/
+          echo "Contents of CPython build directory copied to: $TARGET_UPLOAD_DIR"
+          ls -l "$TARGET_UPLOAD_DIR"
 
       # Step 8: Commit and push the compiled files to the repository
       # This step configures Git, adds the new/updated files, commits them, and pushes to the repo.
       - name: Commit and push compiled files
         run: |
           COMMIT_HASH="${{ steps.get_commit_hash.outputs.commit_hash }}"
-          echo "Committing and pushing compiled files..."
+          echo "Committing and pushing compiled build folder..."
           # Configure Git user for the commit
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          # Add the compiled files to the Git staging area
-          git add compiled/JS/"$COMMIT_HASH".js compiled/WASM/"$COMMIT_HASH".wasm
+          # Add the entire compiled folder to the Git staging area
+          git add compiled/"$COMMIT_HASH"
           # Commit the changes. The '|| echo "No changes to commit"' prevents the workflow
           # from failing if the files haven't actually changed since the last commit.
-          git commit -m "feat: Add CPython WASM build for commit $COMMIT_HASH" || echo "No changes to commit"
+          git commit -m "feat: Upload CPython WASM build folder for commit $COMMIT_HASH" || echo "No changes to commit"
           # Push the changes to the remote repository
           git push
-          echo "Compiled files pushed to repository."
+          echo "Compiled build folder pushed to repository."
