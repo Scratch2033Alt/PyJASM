@@ -1,0 +1,3 @@
+set CC_FOR_TARGET "/home/runner/work/PyJASM/PyJASM/emsdk/upstream/emscripten/emcc"
+set CXX_FOR_TARGET "/home/runner/work/PyJASM/PyJASM/emsdk/upstream/emscripten/em++"
+set compiler_vendor "clang"
