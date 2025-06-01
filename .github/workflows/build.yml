@@ -29,19 +29,17 @@ jobs:
       - name: Checkout current repository
         uses: actions/checkout@v4
 
-      # Step 2: Get the latest Git tag from the current repository
-      # This step fetches all tags and then uses `git describe` to find the latest one.
-      # If no tags are found, it defaults to 'notag'.
-      - name: Get latest tag
-        id: get_tag # Assign an ID to this step to reference its outputs
+      # Step 2: Get the short commit hash of the current HEAD
+      # This step gets the first 7 characters of the commit hash,
+      # which is commonly used as a short, unique identifier.
+      - name: Get short commit hash
+        id: get_commit_hash # Assign an ID to this step to reference its outputs
         run: |
-          git fetch --tags # Fetch all tags from the remote
-          # Get the latest tag. '2>/dev/null' suppresses errors if no tags exist.
-          # '|| echo "notag"' provides a fallback name if no tags are found.
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "notag")
-          # Output the latest tag, making it available to subsequent steps via `steps.get_tag.outputs.latest_tag`
-          echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
-          echo "Discovered latest tag: $LATEST_TAG"
+          # Get the short commit hash (e.g., 'abcdef1')
+          COMMIT_HASH=$(git rev-parse --short HEAD)
+          # Output the commit hash, making it available to subsequent steps
+          echo "commit_hash=$COMMIT_HASH" >> "$GITHUB_OUTPUT"
+          echo "Discovered short commit hash: $COMMIT_HASH"
 
       # Step 3: Set up Python environment
       # CPython's build process and Emscripten's requirements often depend on Python.
@@ -92,6 +90,7 @@ jobs:
           python3 -m venv .venv
           source .venv/bin/activate
           # Install Python dependencies required for the WASM build
+          # Removed the `ls -l` debugging step as the previous issue was addressed.
           pip install -r Tools/wasm/requirements.txt
           # Run the Emscripten build command for CPython
           # This command typically compiles CPython into python.js and python.wasm
@@ -103,18 +102,18 @@ jobs:
 
       # Step 7: Prepare and rename compiled files for upload
       # This step creates the target directories and copies the generated .js and .wasm files,
-      # renaming them according to the latest tag.
+      # renaming them according to the latest commit hash.
       - name: Prepare compiled files for upload
         run: |
-          LATEST_TAG="${{ steps.get_tag.outputs.latest_tag }}"
-          echo "Preparing files for tag: $LATEST_TAG"
+          COMMIT_HASH="${{ steps.get_commit_hash.outputs.commit_hash }}"
+          echo "Preparing files for commit hash: $COMMIT_HASH"
           # Create the target directories if they don't exist
           mkdir -p compiled/JS compiled/WASM
           # Copy and rename the generated files.
           # The exact paths `cpython/Tools/wasm/build/python.js` and `python.wasm`
           # are standard for CPython's Emscripten build output.
-          cp cpython/Tools/wasm/build/python.js compiled/JS/"$LATEST_TAG".js
-          cp cpython/Tools/wasm/build/python.wasm compiled/WASM/"$LATEST_TAG".wasm
+          cp cpython/Tools/wasm/build/python.js compiled/JS/"$COMMIT_HASH".js
+          cp cpython/Tools/wasm/build/python.wasm compiled/WASM/"$COMMIT_HASH".wasm
           echo "Files copied and renamed:"
           ls -l compiled/JS/ compiled/WASM/
 
@@ -122,16 +121,16 @@ jobs:
       # This step configures Git, adds the new/updated files, commits them, and pushes to the repo.
       - name: Commit and push compiled files
         run: |
-          LATEST_TAG="${{ steps.get_tag.outputs.latest_tag }}"
+          COMMIT_HASH="${{ steps.get_commit_hash.outputs.commit_hash }}"
           echo "Committing and pushing compiled files..."
           # Configure Git user for the commit
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           # Add the compiled files to the Git staging area
-          git add compiled/JS/"$LATEST_TAG".js compiled/WASM/"$LATEST_TAG".wasm
+          git add compiled/JS/"$COMMIT_HASH".js compiled/WASM/"$COMMIT_HASH".wasm
           # Commit the changes. The '|| echo "No changes to commit"' prevents the workflow
           # from failing if the files haven't actually changed since the last commit.
-          git commit -m "feat: Add CPython WASM build for tag $LATEST_TAG" || echo "No changes to commit"
+          git commit -m "feat: Add CPython WASM build for commit $COMMIT_HASH" || echo "No changes to commit"
           # Push the changes to the remote repository
           git push
           echo "Compiled files pushed to repository."
